@@ -139,14 +139,13 @@ class Evergreen extends AbstractBase implements \Laminas\Log\LoggerAwareInterfac
 
         // Build SQL Statement
         $sql = <<<HERE
-SELECT ccs.name AS status, acn.label AS callnumber, aou.name AS location
-FROM config.copy_status ccs
-    INNER JOIN asset.copy ac ON ac.status = ccs.id
-    INNER JOIN asset.call_number acn ON acn.id = ac.call_number
-    INNER JOIN actor.org_unit aou ON aou.id = ac.circ_lib
-WHERE
-    acn.record = ? AND
-    NOT ac.deleted
+SELECT  ccs.name AS status, (ccs.id = 8)::INT AS reserve, ccs.is_available::INT,
+        acn.label AS callnumber, aou.name AS location
+  FROM  config.copy_status ccs
+        JOIN asset.copy ac ON ac.status = ccs.id
+        JOIN asset.call_number acn ON acn.id = ac.call_number
+        JOIN actor.org_unit aou ON aou.id = ac.circ_lib
+  WHERE acn.record = ? AND NOT ac.deleted
 HERE;
 
         // Execute SQL
@@ -161,27 +160,12 @@ HERE;
 
         // Build Holdings Array
         while ($row = $sqlStmt->fetch(PDO::FETCH_ASSOC)) {
-            switch ($row['status']) {
-            case 'Available':
-                $available = true;
-                $reserve = false;
-                break;
-            case 'On holds shelf':
-                $available = false;
-                $reserve = true;
-                break;
-            default:
-                $available = false;
-                $reserve = false;
-                break;
-            }
-
             $holding[] = [
                 'id' => $id,
-                'availability' => $available,
+                'availability' => $row['is_available'] > 0,
                 'status' => $row['status'],
                 'location' => $row['location'],
-                'reserve' => $reserve,
+                'reserve' => $row['reserve'] > 0,
                 'callnumber' => $row['callnumber']
             ];
         }
@@ -233,21 +217,15 @@ HERE;
 
         // Build SQL Statement
         $sql = <<<HERE
-SELECT ccs.name AS status, acn.label AS callnumber, aou.name AS location,
-    ac.copy_number, ac.barcode,
-    extract (year from circ.due_date) as due_year,
-    extract (month from circ.due_date) as due_month,
-    extract (day from circ.due_date) as due_day
-FROM config.copy_status ccs
-    INNER JOIN asset.copy ac ON ac.status = ccs.id
-    INNER JOIN asset.call_number acn ON acn.id = ac.call_number
-    INNER JOIN actor.org_unit aou ON aou.id = ac.circ_lib
-    FULL JOIN action.circulation circ ON (
-        ac.id = circ.target_copy AND circ.checkin_time IS NULL
-    )
-WHERE
-    acn.record = ? AND
-    NOT ac.deleted
+SELECT  ccs.name AS status, (ccs.id = 8)::INT AS reserve, ccs.is_available::INT,
+        acn.label AS callnumber, aou.name AS location,
+        ac.copy_number, ac.barcode, circ.due_date::DATE
+  FROM  config.copy_status ccs
+        JOIN asset.copy ac ON ac.status = ccs.id
+        JOIN asset.call_number acn ON acn.id = ac.call_number
+        JOIN actor.org_unit aou ON aou.id = ac.circ_lib
+        LEFT JOIN action.circulation circ ON (ac.id = circ.target_copy AND circ.checkin_time IS NULL)
+  WHERE acn.record = ? AND NOT ac.deleted
 HERE;
 
         // Execute SQL
@@ -261,38 +239,13 @@ HERE;
 
         // Build Holdings Array
         while ($row = $sqlStmt->fetch(PDO::FETCH_ASSOC)) {
-            switch ($row['status']) {
-            case 'Available':
-                $available = true;
-                $reserve = false;
-                break;
-            case 'On holds shelf':
-                // Instead of relying on status = 'On holds shelf',
-                // I might want to see if:
-                // action.hold_request.current_copy = asset.copy.id
-                // and action.hold_request.capture_time is not null
-                // and I think action.hold_request.fulfillment_time is null
-                $available = false;
-                $reserve = true;
-                break;
-            default:
-                $available = false;
-                $reserve = false;
-                break;
-            }
-
-            if ($row['due_year']) {
-                $due_date = $row['due_year'] . "-" . $row['due_month'] . "-" .
-                            $row['due_day'];
-            } else {
-                $due_date = "";
-            }
+            $due_date = $row['due_date'] ? $row['due_date'] : "";
             $holding[] = [
                 'id' => $id,
-                'availability' => $available,
+                'availability' => $row['is_available'] > 0,
                 'status' => $row['status'],
                 'location' => $row['location'],
-                'reserve' => $reserve,
+                'reserve' => $row['reserve'] > 0,
                 'callnumber' => $row['callnumber'],
                 'duedate' => $due_date,
                 'number' => $row['copy_number'],
@@ -337,20 +290,20 @@ HERE;
     public function patronLogin($barcode, $passwd)
     {
         $sql = <<<HERE
-SELECT usr.id, usr.first_given_name as firstName,
-    usr.family_name as lastName, usr.email, usrname
-FROM actor.usr usr
-    INNER JOIN actor.card ON usr.card = card.id
-WHERE card.active = true
-    AND actor.verify_passwd(usr.id, 'main',
-                           MD5(actor.get_salt(usr.id, 'main') || MD5(?)))
+SELECT  usr.id, usr.first_given_name as firstname,
+        usr.family_name as lastname, usr.email, usrname AS cat_username
+        NULL::TEXT AS major, NULL::TEXT AS college
+  FROM  actor.usr usr
+        JOIN actor.card ON usr.card = card.id
+  WHERE card.active = true
+        AND actor.verify_passwd(usr.id, 'main', MD5(actor.get_salt(usr.id, 'main') || MD5(?)))
 HERE;
         if (is_numeric($barcode)) {
             // A barcode was supplied as ID
-            $sql .= "AND card.barcode = ?";
+            $sql .= " AND card.barcode = ?";
         } else {
             // A username was supplied as ID
-            $sql .= "AND usr.usrname = ?";
+            $sql .= " AND usr.usrname = ?";
         }
 
         try {
@@ -360,16 +313,8 @@ HERE;
             $sqlStmt->execute();
             $row = $sqlStmt->fetch(PDO::FETCH_ASSOC);
             if (isset($row['id']) && ($row['id'] != '')) {
-                $return = [];
-                $return['id'] = $row['id'];
-                $return['firstname'] = $row['firstname'];
-                $return['lastname'] = $row['lastname'];
-                $return['cat_username'] = $row['usrname'];
-                $return['cat_password'] = $passwd;
-                $return['email'] = $row['email'];
-                $return['major'] = null;    // Don't know which table this comes from
-                $return['college'] = null;  // Don't know which table this comes from
-                return $return;
+                $row['cat_password'] = $passwd;
+                return $row;
             } else {
                 return null;
             }
@@ -394,28 +339,24 @@ HERE;
     {
         $transList = [];
 
-        $sql = "select call_number.record as bib_id, " .
-               "circulation.due_date as due_date, " .
-               "circulation.target_copy as item_id, " .
-               "circulation.renewal_remaining as renewal_remaining, " .
-               "aou_circ.name as borrowing_location, " .
-               "aou_own.name as owning_library, " .
-               "copy.barcode as barcode " .
-               "from $this->dbName.action.circulation " .
-               "join $this->dbName.asset.copy ON " .
-               " (circulation.target_copy = copy.id) " .
-               "join $this->dbName.asset.call_number ON " .
-               "  (copy.call_number = call_number.id) " .
-               "join $this->dbName.actor.org_unit aou_circ ON " .
-               "  (circulation.circ_lib = aou_circ.id) " .
-               "join $this->dbName.actor.org_unit aou_own ON " .
-               "  (call_number.owning_lib = aou_own.id) " .
-               "where circulation.usr = '" . $patron['id'] . "' " .
-               "and circulation.checkin_time is null " .
-               "and circulation.xact_finish is null";
+        $sql = <<<HERE
+SELECT  cn.record AS id, circ.due_date, circ.target_copy AS item_id, circ.renewal_remaining,
+        circ_ou.name AS borrowing_location, own_ou.name AS owning_library, cp.barcode
+  FROM  asset.copy cp
+        JOIN asset.call_number cn ON (cp.call_number = cn.id)
+        JOIN actor.org_unit own_ou ON (cn.owning_lib = own_ou.id)
+        JOIN action.circulation circ ON (
+            circ.target_copy = cp.id
+            AND circ.checkin_time IS NULL
+            AND circ.xact_finish IS NULL
+            AND circ.usr = ?
+        )
+        JOIN actor.org_unit circ_ou ON (circ.circ_lib = circ_ou.id)
+HERE;
 
         try {
             $sqlStmt = $this->db->prepare($sql);
+            $sqlStmt->bindParam(1, $patron['id'], PDO::PARAM_INT);
             $sqlStmt->execute();
 
             while ($row = $sqlStmt->fetch(PDO::FETCH_ASSOC)) {
@@ -482,28 +423,21 @@ HERE;
     {
         $fineList = [];
 
-        $sql = "select billable_xact_summary.total_owed * 100 as total_owed, " .
-               "billable_xact_summary.balance_owed * 100 as balance_owed, " .
-               "billable_xact_summary.last_billing_type, " .
-               "billable_xact_summary.last_billing_ts, " .
-               "billable_circulations.create_time as checkout_time, " .
-               "billable_circulations.due_date, " .
-               "billable_circulations.target_copy, " .
-               "call_number.record " .
-               "from $this->dbName.money.billable_xact_summary " .
-               "LEFT JOIN $this->dbName.action.billable_circulations " .
-               "ON (billable_xact_summary.id = billable_circulations.id " .
-               " and billable_circulations.xact_finish is null) " .
-               "LEFT JOIN $this->dbName.asset.copy ON " .
-               "  (billable_circulations.target_copy = copy.id) " .
-               "LEFT JOIN $this->dbName.asset.call_number ON " .
-               "  (copy.call_number = call_number.id) " .
-               "where billable_xact_summary.usr = '" . $patron['id'] . "' " .
-               "and billable_xact_summary.total_owed <> 0 " .
-               "and billable_xact_summary.xact_finish is null";
+        $sql = <<<HERE
+SELECT  s.total_owed * 100 AS total_owed, s.balance_owed * 100 AS balance_owed,
+        s.last_billing_type, s.last_billing_ts,
+        c.xact_start AS checkout_time, c.due_date,
+        cn.record
+  FROM  money.billable_xact_summary s
+        LEFT JOIN action.billable_circulations c USING (id)
+        LEFT JOIN asset.copy cp ON (c.target_copy = cp.id)
+        LEFT JOIN asset.call_number cn ON (cp.call_number = cn.id)
+  WHERE s.usr = ? AND s.xact_finished IS NULL AND s.total_owed <> 0
+HERE;
 
         try {
             $sqlStmt = $this->db->prepare($sql);
+            $sqlStmt->bindParam(1, $patron['id'], PDO::PARAM_INT);
             $sqlStmt->execute();
 
             while ($row = $sqlStmt->fetch(PDO::FETCH_ASSOC)) {
@@ -538,24 +472,21 @@ HERE;
     {
         $holdList = [];
 
-        $sql = "select ahr.hold_type, bib_record, " .
-               "ahr.id as hold_id, " .
-               "expire_time, request_time, shelf_time, capture_time, " .
-               "shelf_time, shelf_expire_time, frozen, thaw_date, " .
-               "org_unit.name as lib_name, acp.status as copy_status " .
-               "from $this->dbName.action.hold_request ahr " .
-               "join $this->dbName.actor.org_unit on " .
-               "  (ahr.pickup_lib = org_unit.id) " .
-               "join $this->dbName.reporter.hold_request_record rhrr on " .
-               "  (rhrr.id = ahr.id) " .
-               "left join $this->dbName.asset.copy acp on " .
-               "  (acp.id = ahr.current_copy) " .
-               "where ahr.usr = '" . $patron['id'] . "' " .
-               "and ahr.fulfillment_time is null " .
-               "and ahr.cancel_time is null";
+        $sql = <<<HERE
+SELECT  r.bib_record,
+        h.id, h.hold_type, h.expire_time, h.request_time, h.shelf_time,
+        h.capture_time, h.shelf_time, h.shelf_expire_time, h.frozen::INT, h.thaw_date,
+        (cp.status = 6)::INT AS in_transit, pu_ou.name AS lib_name
+  FROM  action.hold_request h
+        JOIN actor.org_unit pu_ou ON (h.pickup_lib = pu_ou.id)
+        JOIN join reporter.hold_request_record r on (r.id = h.id)
+        LEFT JOIN asset.copy cp ON (cp.id = h.current_copy)
+  WHERE h.usr = ? AND h.fulfillment_time IS NULL AND h.cancel_time IS NULL
+HERE;
 
         try {
             $sqlStmt = $this->db->prepare($sql);
+            $sqlStmt->bindParam(1, $patron['id'], PDO::PARAM_INT);
             $sqlStmt->execute();
             while ($row = $sqlStmt->fetch(PDO::FETCH_ASSOC)) {
                 $holdList[] = [
@@ -564,14 +495,12 @@ HERE;
                     'reqnum' => $row['hold_id'],
                     'location' => $row['lib_name'],
                     'expire' => $this->formatDate($row['expire_time']),
-                    'last_pickup_date' =>
-                        $this->formatDate($row['shelf_expire_time']),
+                    'last_pickup_date' => $this->formatDate($row['shelf_expire_time']),
                     'available' => $row['shelf_time'],
-                    'frozen' => $row['frozen'],
+                    'frozen' => $row['frozen'] > 0,
                     'frozenThrough' => $this->formatDate($row['thaw_date']),
                     'create' => $this->formatDate($row['request_time']),
-                    'in_transit' =>
-                        $row['copy_status'] == self::EVG_ITEM_STATUS_IN_TRANSIT,
+                    'in_transit' => $row['in_transit'] > 0
                 ];
             }
         } catch (PDOException $e) {
@@ -593,15 +522,15 @@ HERE;
     public function getMyProfile($patron)
     {
         $sql = <<<HERE
-SELECT usr.family_name, usr.first_given_name, usr.day_phone,
-    usr.evening_phone, usr.other_phone, aua.street1,
-    aua.street2, aua.post_code, pgt.name AS usrgroup,
-    aua.city, aua.country, usr.expire_date
-FROM actor.usr
-    FULL JOIN actor.usr_address aua ON aua.id = usr.mailing_address
-    INNER JOIN permission.grp_tree pgt ON pgt.id = usr.profile
-WHERE usr.active = true
-     AND usr.id = ?
+SELECT  usr.family_name, usr.first_given_name, usr.day_phone,
+        usr.evening_phone, usr.other_phone, aua.street1,
+        aua.street2, aua.post_code, pgt.name AS usrgroup,
+        aua.city, aua.country, usr.expire_date
+  FROM  actor.usr
+        JOIN permission.grp_tree pgt ON (pgt.id = usr.profile)
+        LEFT JOIN actor.usr_address aua ON (aua.id = usr.mailing_address)
+  WHERE usr.active = true
+        AND usr.id = ?
 HERE;
 
         try {
@@ -619,7 +548,7 @@ HERE;
             }
 
             if ($row) {
-                $patron = [
+                $profile = [
                     'firstname' => $row['first_given_name'],
                     'lastname' => $row['family_name'],
                     'address1' => $row['street1'],
@@ -631,7 +560,7 @@ HERE;
                     'group' => $row['usrgroup'],
                     'expiration_date' => $this->formatDate($row['expire_date']),
                 ];
-                return $patron;
+                return $profile;
             }
         } catch (PDOException $e) {
             $this->throwAsIlsException($e);
@@ -720,17 +649,16 @@ HERE;
     {
         $items = [];
 
-        $enddate = date('Y-m-d', strtotime('now'));
-        $startdate = date('Y-m-d', strtotime("-$daysOld day"));
-
-        $sql = "select count(distinct copy.id) as count " .
-               "from asset.copy " .
-               "where copy.create_date >= '$startdate' " .
-               "and copy.status = 0 " .
-               "and copy.create_date < '$enddate' LIMIT 50";
+        $sql = <<<HERE
+SELECT  COUNT(DISTINCT cn.record)
+  FROM  asset.copy cp
+        JOIN asset.call_number cn ON (cn.id = cp.call_number)
+  WHERE cp.active_date >= NOW() - ? AND NOT cp.deleted
+HERE;
 
         try {
             $sqlStmt = $this->db->prepare($sql);
+            $sqlStmt->bindParam(1, "$daysOld days", PDO::PARAM_STR);
             $sqlStmt->execute();
             $row = $sqlStmt->fetch(PDO::FETCH_ASSOC);
             $items['count'] = $row['count'];
@@ -738,20 +666,26 @@ HERE;
             $this->throwAsIlsException($e);
         }
 
-        // TODO: implement paging support
-        //$page = ($page) ? $page : 1;
-        //$limit = ($limit) ? $limit : 20;
-        //$startRow = (($page-1)*$limit)+1;
-        //$endRow = ($page*$limit);
+        $page = ($page) ? $page : 1;
+        $limit = ($limit) ? $limit : 20;
+        $offset = (($page-1)*$limit);
 
-        $sql = "select copy.id, call_number.record from asset.copy " .
-               "join asset.call_number on (call_number.id = copy.call_number) " .
-               "where copy.create_date >= '$startdate' " .
-               "and copy.status = 0 " .
-               "and copy.create_date < '$enddate' LIMIT 50";
+        $sql = <<<HERE
+SELECT  cn.record, MAX(cp.active_date)
+  FROM  asset.copy cp
+        JOIN asset.call_number cn ON (cn.id = cp.call_number)
+  WHERE cp.active_date >= NOW() - ? AND NOT cp.deleted
+  GROUP BY 1
+  ORDER BY 2 DESC
+  LIMIT ?
+  OFFSET ?
+HERE;
 
         try {
             $sqlStmt = $this->db->prepare($sql);
+            $sqlStmt->bindParam(1, "$daysOld days", PDO::PARAM_STR);
+            $sqlStmt->bindParam(2, $limit, PDO::PARAM_INT);
+            $sqlStmt->bindParam(3, $offset, PDO::PARAM_INT);
             $sqlStmt->execute();
             while ($row = $sqlStmt->fetch(PDO::FETCH_ASSOC)) {
                 $items['results'][]['id'] = $row['record'];
@@ -801,6 +735,7 @@ HERE;
     {
         $list = [];
 
+        /**
         $sql = "select copy.id as id " .
                "from $this->dbName.asset " .
                "where copy.opac_visible = false";
@@ -814,6 +749,7 @@ HERE;
         } catch (PDOException $e) {
             $this->throwAsIlsException($e);
         }
+        **/
 
         return $list;
     }
