@@ -541,6 +541,8 @@ class EvergreenRest extends AbstractBase implements TranslatorAwareInterface,
             $result['dob']
         );
         return [
+            'cat_username' => $patron['cat_username'],
+            'cat_password' => $patron['cat_password'],
             'firstname' => $result['first_given_name'],
             'lastname' => $result['family_name'],
             'phone' => $result['day_phone'],
@@ -1016,8 +1018,7 @@ class EvergreenRest extends AbstractBase implements TranslatorAwareInterface,
         $bibId = $holdDetails['id'];
 
         $request = [
-            'pickup_lib' => $pickUpLocation,
-            'expire_time' => $lastInterestDate
+            'pickup_lib' => $pickUpLocation
         ];
 
         if ($level == 'bib') {
@@ -1032,6 +1033,7 @@ class EvergreenRest extends AbstractBase implements TranslatorAwareInterface,
                 'Y-m-d',
                 $holdDetails['requiredBy']
             );
+            $request['expire_time'] = $lastInterestDate;
         } catch (DateException $e) {
             // Hold Date is invalid
             return $this->holdError('hold_date_invalid');
