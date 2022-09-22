@@ -1563,7 +1563,7 @@ class EvergreenRest extends AbstractBase implements TranslatorAwareInterface,
     protected function getPatronBlocks($patron)
     {
         $result = $this->makeRequest(
-            ['self', 'standing_penalies'],
+            ['self', 'standing_penalties'],
             [],
             'GET',
             $patron
@@ -1575,7 +1575,6 @@ class EvergreenRest extends AbstractBase implements TranslatorAwareInterface,
                $blockReason[] = $sp['usr_message']['message'] ?? $sp['standing_penalty']['label'];
             }
         }
-
         return empty($blockReason) ? false : $blockReason;
     }
 
