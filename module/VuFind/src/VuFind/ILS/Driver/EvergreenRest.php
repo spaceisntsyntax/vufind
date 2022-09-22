@@ -400,7 +400,7 @@ class EvergreenRest extends AbstractBase implements TranslatorAwareInterface,
             if (!empty($u['section_number'])) {
                 $name = $name . ' - ' .$u['section_number'];
             }
-            $name = $name ' (' . $u['owning_lib']['name'] . ')';
+            $name = $name . ' (' . $u['owning_lib']['name'] . ')';
             $courses[$u['id']] = $name;
         }
 
@@ -431,8 +431,8 @@ class EvergreenRest extends AbstractBase implements TranslatorAwareInterface,
         $mats = [];
         foreach ($result as $m) {
             $mats[] = [
-                'BIB_ID' => $m['record']['id'];
-                'COURSE_ID' => $m['course'];
+                'BIB_ID' => $m['record']['id'],
+                'COURSE_ID' => $m['course'],
             ];
         }
 
@@ -468,7 +468,7 @@ class EvergreenRest extends AbstractBase implements TranslatorAwareInterface,
             }
         }
 
-        return $patron
+        return $patron;
     }
 
     /**
@@ -527,8 +527,8 @@ class EvergreenRest extends AbstractBase implements TranslatorAwareInterface,
         if (!empty($result['addresses'][0]['street1'])) {
             $address = $result['addresses'][0]['street1'];
             $address2 = $result['addresses'][0]['street2'];
-            $zip = $result['addresses'][0]['post_code']
-            $city = $result['addresses'][0]['city'] . ', ' . $result['addresses'][0]['state']
+            $zip = $result['addresses'][0]['post_code'];
+            $city = $result['addresses'][0]['city'] . ', ' . $result['addresses'][0]['state'];
             $country = $result['addresses'][0]['country'];
         }
         $expirationDate = !empty($result['expire_date'])
@@ -643,7 +643,7 @@ class EvergreenRest extends AbstractBase implements TranslatorAwareInterface,
                 'POST',
                 $patron
             );
-            if ($result['errors'] > 0)) {
+            if ($result['errors'] > 0) {
                 $msg = $result['result'][0]['desc'] ?? $result['result'][0]['textcode'];
                 $finalResult['details'][$itemId] = [
                     'item_id' => $itemId,
@@ -1391,7 +1391,7 @@ class EvergreenRest extends AbstractBase implements TranslatorAwareInterface,
             $params['p'] = $patron['cat_password'];
         } else {
             $params['u'] = $this->config['Catalog']['proxy_user'];
-            $params['p'] = $this->config['Catalog']['proxy_password']
+            $params['p'] = $this->config['Catalog']['proxy_password'];
         }
 
         // Set up the request
