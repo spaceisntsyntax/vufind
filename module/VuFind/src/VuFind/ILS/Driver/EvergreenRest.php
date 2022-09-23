@@ -553,7 +553,7 @@ class EvergreenRest extends AbstractBase implements TranslatorAwareInterface,
             'city' => $city,
             'country' => $country,
             'expiration_date' => $expirationDate,
-            'home_ou' => $$result['home_ou'],
+            'home_ou' => $result['home_ou'],
             'birthdate' => $dob
         ];
     }
@@ -587,14 +587,14 @@ class EvergreenRest extends AbstractBase implements TranslatorAwareInterface,
             $circ = $entry['circ']; // circ
 
             $transaction = [
-                'id' => $rec['id'],
+                'id' => $rec['doc_id'],
                 'checkout_id' => $circ['id'],
                 'item_id' => $cp['id'],
                 'barcode' => $cp['barcode'],
                 'title' => $rec['title'],
                 'publication_year' => $rec['pubdate'],
                 'isbn' => $rec['isbn'],
-                'dueDate' => $this->dateConverter->convertToDisplayDate(
+                'duedate' => $this->dateConverter->convertToDisplayDate(
                     'Y-m-d',
                     $circ['due_date']
                 ),
@@ -794,10 +794,15 @@ class EvergreenRest extends AbstractBase implements TranslatorAwareInterface,
                     $h['thaw_date']
                 ) : '',
                 'cancel_details' => in_array($e['status'], [1,2,3,4,5,7,8]) ? $h['id'] : '',
-                'updateDetails' => in_array($e['status'], [1,2,3,4,5,7,8]) ? $h['id'] : '',
+                'updateDetails' => in_array($e['status'], [1,2,3,4,5,7,8]) ? $h['id'] : ''
             ];
         }
         return $holds;
+    }
+
+    public function getCancelHoldDetails($hold, $patron = [])
+    {
+        return $hold['reqnum'] . '';
     }
 
     /**
@@ -1012,7 +1017,7 @@ class EvergreenRest extends AbstractBase implements TranslatorAwareInterface,
             ? $holdDetails['pickUpLocation'] : $this->defaultPickUpLocation;
 
         $level = isset($holdDetails['level']) && !empty($holdDetails['level'])
-            ? $holdDetails['level'] : 'bib';
+            ? $holdDetails['level'] : 'title';
 
         $itemId = $holdDetails['item_id'];
         $bibId = $holdDetails['id'];
@@ -1021,7 +1026,7 @@ class EvergreenRest extends AbstractBase implements TranslatorAwareInterface,
             'pickup_lib' => $pickUpLocation
         ];
 
-        if ($level == 'bib') {
+        if ($level == 'title') {
             $request['bib'] = $bibId;
         } else {
             $request['copy'] = $itemId;
@@ -1500,12 +1505,14 @@ class EvergreenRest extends AbstractBase implements TranslatorAwareInterface,
         foreach ($holdingsTree as $acn) {
             foreach ($acn['copies'] as $acp) {
                 $holdingsData[] = [
-                    'id' => $acp['id'],
+                    'id' => $id,
+                    'item_id' => $acp['id'],
                     'availability' => $acp['status']['is_available'],
-                    'status' => $acp['status']['id'],
+                    'status' => $this->mapStatusCode($acp['status']['id']),
                     'barcode' => $acp['barcode'],
-                    'number' => $acp['copy_number'],
+                    'number' => $acp['barcode'],
                     'is_holdable' => $acp['holdable'] && $acp['location']['holdable'] && $acp['status']['holdable'],
+                    'hold_type' => 'hold',
                     'location' => $acp['location']['name'],
                     'reserve' => $acp['status']['id'] == 12 ? 'Y' : 'N',
                     'callnumber' => $acn['label'],
